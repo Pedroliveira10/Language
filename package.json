@@ -5,9 +5,10 @@
   "type": "module",
   "description": "A mobile-first Dutch, Polish, and European Portuguese learning studio.",
   "scripts": {
+    "build": "node scripts/build.mjs",
     "start": "node scripts/serve.mjs",
     "test": "node --test",
-    "check:content": "node scripts/validate-content.mjs"
+    "check:content": "node scripts/validate-content.mjs && node scripts/validate-studio-content.mjs"
   },
   "engines": {
     "node": ">=20"
