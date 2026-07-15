@@ -1,11 +1,11 @@
 import { CEFR_LEVELS } from './config/cefrLevels.js';
 import { CATEGORIES, getCategory } from './config/categories.js';
-import { COURSE_CONTENT, LANGUAGES, findTopic, getTopics } from './data/courseContent.js';
+import { COURSE_CONTENT, LANGUAGES, findTopic, getTopics } from './data/expandedCourseContent.js';
 import { LANGUAGE_BASICS, findBasicsLesson } from './data/language-basics/index.js';
 import { CategoryCard } from './components/CategoryCard.js';
 import { CefrLevelSelector } from './components/CefrLevelSelector.js';
-import { TopicCard } from './components/TopicCard.js';
-import { ExerciseRenderer } from './components/ExerciseRenderer.js';
+import { RichTopicCard } from './components/RichTopicCard.js';
+import { ExpandedExerciseRenderer } from './components/ExpandedExerciseRenderer.js';
 import { AnswerFeedback, SpeechFeedback } from './components/FeedbackBox.js';
 import { escapeHtml } from './components/studioMarkup.js';
 import { speakText } from './services/studioAudio.js';
@@ -71,14 +71,20 @@ function hideSettings() {
   settingsButton.focus();
 }
 
-function topicContext(topic) {
+function topicContext(topic, exercise = null) {
   return {
     language: topic.language,
     category: topic.category,
     cefrLevel: topic.cefrLevel,
     topicId: topic.topicId,
-    lessonId: topic.lesson.id
+    lessonId: exercise?.lessonId || topic.lesson.id
   };
+}
+
+function topicProgress(topic) {
+  const completed = topic.exercises.filter((exercise) =>
+    Boolean(getLessonProgress(progress, topicContext(topic, exercise))?.completed)).length;
+  return { completed, total: topic.exercises.length };
 }
 
 function basicsContext(lesson) {
@@ -135,7 +141,8 @@ function renderLanguage(languageId) {
   const language = LANGUAGES[languageId];
   if (!language) return renderNotFound('Language not found.');
   const cards = CATEGORIES.map((category) => {
-    const total = CEFR_LEVELS.reduce((sum, level) => sum + getTopics(languageId, category.id, level.id).length, 0);
+    const total = CEFR_LEVELS.reduce((sum, level) => sum + getTopics(languageId, category.id, level.id)
+      .reduce((levelTotal, topic) => levelTotal + topic.exercises.length, 0), 0);
     const summary = cappedSummary({ language: languageId, category: category.id }, total);
     return CategoryCard({ category, completed: summary.completed, total, href: route(['language', languageId, 'category', category.id]) });
   }).join('');
@@ -153,7 +160,8 @@ function renderCategory(languageId, categoryId) {
   const category = getCategory(categoryId);
   if (!language || !category) return renderNotFound('Category not found.');
   const summaries = Object.fromEntries(CEFR_LEVELS.map((level) => {
-    const total = getTopics(languageId, categoryId, level.id).length;
+    const total = getTopics(languageId, categoryId, level.id)
+      .reduce((sum, topic) => sum + topic.exercises.length, 0);
     return [level.id, cappedSummary({ language: languageId, category: categoryId, cefrLevel: level.id }, total)];
   }));
   root.innerHTML = `${viewHeader({
@@ -174,11 +182,15 @@ function renderTopics(languageId, categoryId, level) {
   const levelMeta = CEFR_LEVELS.find((item) => item.id === level);
   if (!language || !category || !levelMeta) return renderNotFound('Course level not found.');
   const topics = getTopics(languageId, categoryId, level);
-  const cards = topics.map((topic) => TopicCard({
-    topic,
-    completed: Boolean(getLessonProgress(progress, topicContext(topic))?.completed),
-    href: route(['language', languageId, 'category', categoryId, 'level', level, 'topic', topic.topicId])
-  })).join('');
+  const cards = topics.map((topic) => {
+    const summary = topicProgress(topic);
+    return RichTopicCard({
+      topic,
+      completed: summary.completed,
+      total: summary.total,
+      href: route(['language', languageId, 'category', categoryId, 'level', level, 'topic', topic.topicId])
+    });
+  }).join('');
   root.innerHTML = `${viewHeader({
     eyebrow: `${language.name} · ${category.label} · ${level}`,
     title: `${level} — ${levelMeta.label}`,
@@ -207,7 +219,12 @@ function renderTopic(languageId, categoryId, level, topicId) {
     <div class="lesson-note"><strong>Common mistake</strong><p>${escapeHtml(topic.lesson.commonMistake)}</p></div>
     <div class="lesson-note guidance"><strong>Support at ${level}</strong><p>${escapeHtml(topic.lesson.guidance)}</p></div>
   </article>
-  <div class="exercise-stack">${topic.exercises.map((exercise) => ExerciseRenderer(exercise, { speechSupported: isSpeechRecognitionSupported(window) })).join('')}</div>`;
+  <div class="exercise-stack">${topic.exercises.map((exercise, index) => ExpandedExerciseRenderer(exercise, {
+    speechSupported: isSpeechRecognitionSupported(window),
+    index,
+    total: topic.exercises.length,
+    completed: Boolean(getLessonProgress(progress, topicContext(topic, exercise))?.completed)
+  })).join('')}</div>`;
 }
 
 function renderBasics() {
@@ -287,7 +304,14 @@ function feedbackTarget(exerciseId) {
 }
 
 function storeExerciseResult(exercise, result) {
-  recordExerciseAttempt(progress, topicContext(currentTopic), { ...result, type: exercise.type });
+  const record = recordExerciseAttempt(progress, topicContext(currentTopic, exercise), { ...result, type: exercise.type });
+  if (record.completed) {
+    const card = root.querySelector(`[data-exercise-card="${exercise.id}"]`);
+    card?.classList.add('is-complete');
+    const status = card?.querySelector('[data-exercise-status]');
+    if (status) status.textContent = 'Complete ✓';
+  }
+  return record;
 }
 
 function showAnswerResult(exercise, answer) {

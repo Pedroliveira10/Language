@@ -9,7 +9,7 @@ The static build remains compatible with GitHub Pages and requires no backend.
 ## Main changes
 
 - Added A0, A1, A2, B1, B2, C1, and C2 inside every language category.
-- Added 252 validated topics and 252 exercises: two topics for every combination of 3 languages, 6 categories, and 7 CEFR levels.
+- Added 630 validated topics and 3,150 activities: five topics with five independently tracked activities for every combination of 3 languages, 6 categories, and 7 CEFR levels.
 - Changed guidance, translations, speech rate, expected answer length, answer type, and hints as levels increase.
 - Kept manual answers and integrated them into the progression; higher levels use more open production.
 - Added browser speech recognition with `nl-NL`, `pl-PL`, and `pt-PT`, accepted alternatives, normalized comparison, word-level feedback, and a recognition score.
@@ -65,10 +65,10 @@ This is word-recognition feedback, not a professional pronunciation assessment. 
 ## Testing performed
 
 - Build completed successfully.
-- Content validators passed for 3 existing curricula, 3 existing exercises, 252 CEFR topics, 252 CEFR exercises, and 33 Language Basics lessons.
-- 29 automated tests passed across content, exercises, navigation, profile, progress migration, speech comparison, recognition lifecycle, unsupported-browser fallback, denied permission, and locale handling.
-- Syntax checks passed for 90 JavaScript and MJS files.
-- Browser route matrix: all 126 language/category/level pages opened, and the first topic on each level page opened, for 252 successful level/topic checks.
+- Content validators passed for 3 existing curricula, 3 existing exercises, 630 CEFR topics, 3,150 course activities, and 33 Language Basics lessons.
+- 36 automated tests passed across expanded content, varied renderers, per-activity progress, navigation, profile, migration, speech comparison, recognition lifecycle, unsupported-browser fallback, denied permission, and locale handling.
+- Syntax checks passed for 101 JavaScript and MJS files.
+- Browser route matrix: all 126 language/category/level pages displayed five topics, and the first topic on every page displayed five activities, for 252 successful level/topic checks.
 - Multiple-choice answer and persisted completion tested.
 - Manual answer with an accepted variation tested.
 - C2 open writing response and model comparison tested.
@@ -77,7 +77,7 @@ This is word-recognition feedback, not a professional pronunciation assessment. 
 - Dark-mode contrast measured in browser: body 17.75:1, input text 13.72:1, placeholder 5.14:1, primary button 15.34:1, muted text 11.64:1, and high-contrast chips 8.97:1 in the tested states.
 - Desktop and 390 x 844 mobile layouts tested with no horizontal overflow; the mobile Settings control did not overlap the title.
 - Invalid topic handling and the preserved legacy page tested.
-- A temporary `/Language/index.html` deployment simulation loaded its module and stylesheet from `/Language/assets/`; a nested Polish B2 vocabulary route opened with two topics.
+- A temporary `/Language/index.html` deployment simulation loaded its module and stylesheet from `/Language/assets/`; a nested Polish B2 vocabulary route opened correctly.
 - The generated `public/dutch_polish_portuguese_mobile_learning_studio.html` compatibility page was verified byte-for-byte against the new `public/index.html`.
 - No JavaScript console errors were present at the end of browser testing.
 
@@ -93,7 +93,7 @@ This is word-recognition feedback, not a professional pronunciation assessment. 
 - Web Speech API support and accuracy vary by browser and platform. Chrome or Edge is recommended.
 - Recognition scoring checks recognized words and cannot reliably judge accent, stress, rhythm, or phoneme quality.
 - Higher-level open writing shows a model and guidance but cannot provide generative AI evaluation without a backend or external service.
-- The new CEFR catalog is structurally complete with two topics per category/level combination, but it is still starter curriculum depth and can be expanded with more authored lessons.
+- The expanded catalog now has five topics and five activities per category/level path. It is substantially deeper, but generated material should still receive ongoing native-speaker review and can be extended with more authored examples.
 - Legacy data with an unknown format is backed up but may not be automatically classifiable.
 
 ## Files created

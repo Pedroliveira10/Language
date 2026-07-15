@@ -4,10 +4,9 @@ A mobile-first learning app for Dutch, Polish, and European Portuguese.
 
 ## Current state
 
-The original, fully working single-file application is preserved at
-`public/index.html`. The `src` tree establishes the boundaries for migrating
-that application into maintainable modules without interrupting the published
-version.
+The modular application contains 630 CEFR topics and 3,150 independently
+tracked activities across Dutch, Polish, and European Portuguese. The original
+single-file application is preserved at public/legacy.html.
 
 ## Run locally
 
@@ -24,6 +23,7 @@ Open `http://localhost:8000`. No package installation is required.
 ```bash
 npm test
 npm run check:content
+npm run build
 ```
 
 ## Architecture
