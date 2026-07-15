@@ -1,0 +1,22 @@
+{
+  "id": "portuguese-pt",
+  "name": "European Portuguese",
+  "locale": "pt-PT",
+  "level": "A1",
+  "units": [
+    {
+      "id": "pt-greetings",
+      "title": "Greetings",
+      "exercises": [
+        {
+          "id": "pt-greetings-1",
+          "type": "multiple-choice",
+          "prompt": "How do you say good morning?",
+          "options": ["Bom dia", "Obrigado", "Até logo"],
+          "answer": "Bom dia"
+        }
+      ]
+    }
+  ]
+}
+
