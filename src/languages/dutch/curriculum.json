@@ -1,0 +1,22 @@
+{
+  "id": "dutch",
+  "name": "Dutch",
+  "locale": "nl-NL",
+  "level": "A1",
+  "units": [
+    {
+      "id": "nl-greetings",
+      "title": "Greetings",
+      "exercises": [
+        {
+          "id": "nl-greetings-1",
+          "type": "multiple-choice",
+          "prompt": "How do you say hello?",
+          "options": ["Hallo", "Dank je", "Tot ziens"],
+          "answer": "Hallo"
+        }
+      ]
+    }
+  ]
+}
+
