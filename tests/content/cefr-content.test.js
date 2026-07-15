@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CATEGORIES } from '../../src/config/categories.js';
 import { CEFR_LEVELS } from '../../src/config/cefrLevels.js';
-import { COURSE_CONTENT, LANGUAGES } from '../../src/data/courseContent.js';
+import { COURSE_CONTENT, EXERCISES_PER_TOPIC, LANGUAGES, TOPICS_PER_LEVEL } from '../../src/data/expandedCourseContent.js';
 
-test('every language, category and CEFR level has two topics', () => {
+test('every language, category and CEFR level has a substantial topic set', () => {
   for (const language of Object.keys(LANGUAGES)) {
     for (const category of CATEGORIES) {
       for (const level of CEFR_LEVELS) {
         const topics = COURSE_CONTENT[language]?.[category.id]?.[level.id];
-        assert.equal(topics?.length, 2, `${language}/${category.id}/${level.id}`);
+        assert.equal(topics?.length, TOPICS_PER_LEVEL, `${language}/${category.id}/${level.id}`);
+        topics.forEach((topic) => assert.equal(topic.exercises.length, EXERCISES_PER_TOPIC, topic.id));
       }
     }
   }
@@ -35,7 +36,7 @@ test('all generated exercises contain required metadata and unique ids', () => {
       }
     }
   }
-  assert.equal(ids.size, 252);
+  assert.equal(ids.size, 3150);
 });
 
 test('difficulty changes exercise production and guidance', () => {
@@ -45,7 +46,7 @@ test('difficulty changes exercise production and guidance', () => {
       const c2 = COURSE_CONTENT[language][category.id].C2[0].exercises[0];
       if (category.id !== 'speaking' && category.id !== 'writing') assert.equal(a0.type, 'multipleChoice');
       if (category.id === 'speaking') assert.equal(c2.type, 'speaking');
-      else assert.ok(['openResponse', 'manual'].includes(c2.type));
+      else assert.ok(COURSE_CONTENT[language][category.id].C2[0].exercises.some((exercise) => ['openResponse', 'manual'].includes(exercise.type)));
       assert.equal(a0.difficultyMetadata.hintLevel, 'strong');
       assert.equal(c2.difficultyMetadata.hintLevel, 'none');
       assert.ok(a0.difficultyMetadata.speechRate < c2.difficultyMetadata.speechRate);
