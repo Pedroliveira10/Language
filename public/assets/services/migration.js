@@ -1,7 +1,8 @@
 import { backupStorageKey, readJson, writeJson } from './studioStorage.js';
 
-export const PROGRESS_KEY = 'language-studio-progress-v2';
-export const MIGRATION_KEY = 'language-studio-migration-v2';
+export const PROGRESS_KEY = 'language-studio-progress-v3';
+export const MIGRATION_KEY = 'language-studio-migration-v3';
+export const V2_PROGRESS_KEY = 'language-studio-progress-v2';
 export const LEGACY_KEYS = Object.freeze(['englishPathState', 'language-studio-pl', 'language-studio-pt-PT']);
 
 export function legacyLevelToCefr(value) {
@@ -9,11 +10,11 @@ export function legacyLevelToCefr(value) {
 }
 
 export function createEmptyProgress() {
-  return { version: 2, records: {}, lastRoute: '#/', migratedAt: null };
+  return { version: 3, records: {}, positions: {}, reading: {}, bookmarks: {}, recentStructure: {}, lastRoute: '#/', migratedAt: null };
 }
 
-export function progressKey({ language, category, cefrLevel, topicId, lessonId }) {
-  return [language, category, cefrLevel, topicId, lessonId].join('|');
+export function progressKey({ language, category, cefrLevel, exerciseType, topicId, lessonId }) {
+  return [language, category, cefrLevel, exerciseType || 'legacy', topicId, lessonId].join('|');
 }
 
 function migratedRecord(context, legacyKey) {
@@ -66,7 +67,18 @@ function migrateCompletedModules(progress, storage, storageKey, language) {
 }
 
 export function migrateLegacyProgress(storage = globalThis.localStorage, now = new Date()) {
-  const progress = readJson(PROGRESS_KEY, createEmptyProgress(), storage);
+  let progress = readJson(PROGRESS_KEY, null, storage);
+  if (!progress) {
+    const v2 = readJson(V2_PROGRESS_KEY, null, storage);
+    if (v2) {
+      backupStorageKey(V2_PROGRESS_KEY, storage);
+      progress = { ...createEmptyProgress(), lastRoute: v2.lastRoute || '#/' };
+      for (const record of Object.values(v2.records || {})) {
+        const migrated = { ...record, exerciseType: record.exerciseType || 'legacy-25', migratedFromV2: true };
+        progress.records[progressKey(migrated)] = migrated;
+      }
+    } else progress = createEmptyProgress();
+  }
   if (readJson(MIGRATION_KEY, null, storage)?.complete) return progress;
 
   LEGACY_KEYS.forEach((key) => backupStorageKey(key, storage));
@@ -74,14 +86,13 @@ export function migrateLegacyProgress(storage = globalThis.localStorage, now = n
   migrateCompletedModules(progress, storage, 'language-studio-pl', 'pl');
   migrateCompletedModules(progress, storage, 'language-studio-pt-PT', 'pt');
 
-  progress.version = 2;
+  progress.version = 3;
   progress.migratedAt = now.toISOString();
   writeJson(PROGRESS_KEY, progress, storage);
   writeJson(MIGRATION_KEY, {
     complete: true,
     migratedAt: progress.migratedAt,
-    backups: LEGACY_KEYS.map((key) => `language-studio-backup-${key}`)
+    backups: [...LEGACY_KEYS.map((key) => `language-studio-backup-${key}`), `language-studio-backup-${V2_PROGRESS_KEY}`]
   }, storage);
   return progress;
 }
-

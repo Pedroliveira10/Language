@@ -1,16 +1,16 @@
 import { CEFR_LEVELS } from './config/cefrLevels.js';
 import { CATEGORIES, getCategory } from './config/categories.js';
-import { COURSE_CONTENT, LANGUAGES, findTopic, getTopics } from './data/expandedCourseContent.js';
-import { LANGUAGE_BASICS, findBasicsLesson } from './data/language-basics/index.js';
+import { COURSE_CONTENT, LANGUAGES } from './data/expandedCourseContent.js';
+import { EXERCISES_PER_LEVEL, getExerciseSections, getExerciseSection, validateLevelCatalog } from './data/exerciseCatalog.js';
+import { getLanguageStructure, findStructureLesson } from './data/languageStructure.js';
 import { CategoryCard } from './components/CategoryCard.js';
 import { CefrLevelSelector } from './components/CefrLevelSelector.js';
-import { RichTopicCard } from './components/RichTopicCard.js';
 import { ExpandedExerciseRenderer } from './components/ExpandedExerciseRenderer.js';
 import { AnswerFeedback, SpeechFeedback } from './components/FeedbackBox.js';
-import { escapeHtml } from './components/studioMarkup.js';
+import { escapeHtml, progressPercent } from './components/studioMarkup.js';
 import { speakText } from './services/studioAudio.js';
 import { compareSpeech, isSpeechRecognitionSupported, recogniseOnce } from './services/speechRecognition.js';
-import { getLessonProgress, loadStudioProgress, progressSummary, recordExerciseAttempt, saveLastRoute } from './services/studioProgress.js';
+import { getLessonProgress, getSectionPosition, loadStudioProgress, progressSummary, recordExerciseAttempt, saveLastRoute, saveSectionPosition, saveStructureReading, toggleStructureBookmark } from './services/studioProgress.js';
 import { loadStudioPreferences, saveStudioPreferences, setCourseEnrolled } from './services/studioPreferences.js';
 
 const root = document.getElementById('app');
@@ -19,404 +19,156 @@ const settingsButton = document.getElementById('settingsButton');
 const closeSettings = document.getElementById('closeSettings');
 let progress = loadStudioProgress();
 let preferences = loadStudioPreferences();
-let currentTopic = null;
-let currentBasicsLesson = null;
+let currentExercise = null;
+let currentContext = null;
+let structureSearchTimer = null;
 
-function route(parts) {
-  return `#/${parts.filter(Boolean).map((part) => encodeURIComponent(part)).join('/')}`;
-}
-
-function decodeRoute() {
-  try {
-    return location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  } catch {
-    return [];
-  }
-}
-
-function backLink(href, label = 'Back') {
-  return `<a class="back-link" href="${href}">← ${escapeHtml(label)}</a>`;
-}
-
+const route = (parts) => `#/${parts.filter((part) => part !== undefined && part !== null).map((part) => encodeURIComponent(part)).join('/')}`;
+function decodeRoute() { try { return location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent); } catch { return []; } }
+const backLink = (href, label = 'Back') => `<a class="back-link" href="${href}">← ${escapeHtml(label)}</a>`;
 function viewHeader({ eyebrow, title, description, backHref, backLabel, actions = '' }) {
-  return `<div class="view-header">
-    <div>${backHref ? backLink(backHref, backLabel) : ''}<p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div>
-    ${actions ? `<div class="view-actions">${actions}</div>` : ''}
-  </div>`;
+  return `<div class="view-header"><div>${backHref ? backLink(backHref, backLabel) : ''}<p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div>${actions ? `<div class="view-actions">${actions}</div>` : ''}</div>`;
 }
 
 function applyPreferences() {
-  const systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
-  const dark = preferences.theme === 'dark' || (preferences.theme === 'system' && systemDark);
+  const dark = preferences.theme === 'dark' || (preferences.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.documentElement.dataset.motion = preferences.reducedMotion ? 'reduced' : 'full';
 }
+function syncSettingsControls() { document.querySelectorAll('[data-setting]').forEach((control) => { const key = control.dataset.setting; if (control.type === 'checkbox') control.checked = Boolean(preferences[key]); else control.value = String(preferences[key]); }); }
+function openSettings() { syncSettingsControls(); settingsModal.hidden = false; closeSettings.focus(); }
+function hideSettings() { settingsModal.hidden = true; settingsButton.focus(); }
 
-function syncSettingsControls() {
-  document.querySelectorAll('[data-setting]').forEach((control) => {
-    const key = control.dataset.setting;
-    if (control.type === 'checkbox') control.checked = Boolean(preferences[key]);
-    else control.value = String(preferences[key]);
-  });
+function exerciseContext(language, category, cefrLevel, exerciseType, exercise) {
+  return { language, category, cefrLevel, exerciseType, topicId: exerciseType, lessonId: exercise.id };
 }
-
-function openSettings() {
-  syncSettingsControls();
-  settingsModal.hidden = false;
-  closeSettings.focus();
-}
-
-function hideSettings() {
-  settingsModal.hidden = true;
-  settingsButton.focus();
-}
-
-function topicContext(topic, exercise = null) {
-  return {
-    language: topic.language,
-    category: topic.category,
-    cefrLevel: topic.cefrLevel,
-    topicId: topic.topicId,
-    lessonId: exercise?.lessonId || topic.lesson.id
-  };
-}
-
-function topicProgress(topic) {
-  const completed = topic.exercises.filter((exercise) =>
-    Boolean(getLessonProgress(progress, topicContext(topic, exercise))?.completed)).length;
-  return { completed, total: topic.exercises.length };
-}
-
-function basicsContext(lesson) {
-  return { language: 'basics', category: 'language-basics', cefrLevel: 'A0', topicId: lesson.id, lessonId: lesson.id };
-}
-
-function cappedSummary(filter, total) {
-  const summary = progressSummary(progress, filter);
-  return { ...summary, completed: Math.min(total, summary.completed), total };
+function sectionSummary(language, category, level, section) {
+  const summary = progressSummary(progress, { language, category, cefrLevel: level, exerciseType: section.id });
+  return { ...summary, total: section.exercises.length, completed: Math.min(summary.completed, section.exercises.length) };
 }
 
 function renderHome() {
-  currentTopic = null;
-  currentBasicsLesson = null;
+  currentExercise = currentContext = null;
   const all = progressSummary(progress);
-  const continueAction = progress.lastRoute && progress.lastRoute !== '#/'
-    ? `<a class="button secondary" href="${escapeHtml(progress.lastRoute)}">Continue last lesson</a>` : '';
-  root.innerHTML = `${viewHeader({
-    eyebrow: 'One studio · three languages',
-    title: 'Choose what you want to learn',
-    description: 'Follow a clear Category → CEFR level → Topic → Exercise path, or learn grammar terminology in English.',
-    actions: continueAction
-  })}
-  <section class="dashboard-stats" aria-label="Learning summary">
-    <div><strong>${preferences.enrolled.length}</strong><span>courses enrolled</span></div>
-    <div><strong>${all.completed}</strong><span>lessons completed</span></div>
-    <div><strong>${all.correct}</strong><span>correct answers</span></div>
-    <div><strong>${all.speakingAttempts}</strong><span>speaking attempts</span></div>
-  </section>
-  <section class="course-grid" aria-label="Courses">
-    ${Object.values(LANGUAGES).map((language) => {
-      const enrolled = preferences.enrolled.includes(language.id);
-      const summary = progressSummary(progress, { language: language.id });
-      return `<article class="course-card accent-${language.accent}">
-        <span class="course-flag" aria-hidden="true">${language.flag}</span>
-        <span class="enrolment-status ${enrolled ? 'active' : ''}">${enrolled ? 'Enrolled' : 'Not enrolled'}</span>
-        <h2>${escapeHtml(language.name)}</h2>
-        <p>Grammar, vocabulary, pronunciation, writing, conversation and speaking from A0 to C2.</p>
-        <div class="chip-row"><span class="chip high-contrast">${language.locale} audio</span><span class="chip high-contrast">7 CEFR levels</span><span class="chip high-contrast">${summary.completed} complete</span></div>
-        <div class="button-row"><a class="button" href="${route(['language', language.id])}">Open course</a><button class="button secondary" type="button" data-enrol-language="${language.id}">${enrolled ? 'Leave course' : 'Enrol'}</button></div>
-      </article>`;
-    }).join('')}
-    <article class="course-card basics-card">
-      <span class="course-flag" aria-hidden="true">🧩</span><span class="enrolment-status active">English guide</span>
-      <h2>Language Basics</h2>
-      <p>Learn what nouns, pronouns, verbs, clauses, cases and other grammar terms mean before using them in a new language.</p>
-      <div class="chip-row"><span class="chip high-contrast">${LANGUAGE_BASICS.length} lessons</span><span class="chip high-contrast">Quizzes</span><span class="chip high-contrast">Sentence breakdowns</span></div>
-      <div class="button-row"><a class="button" href="#/basics">Learn the basics</a></div>
-    </article>
-  </section>`;
+  const continueAction = progress.lastRoute && progress.lastRoute !== '#/' ? `<a class="button secondary" href="${escapeHtml(progress.lastRoute)}">Continue where I stopped</a>` : '';
+  root.innerHTML = `${viewHeader({ eyebrow: 'One studio · three languages', title: 'Choose what you want to learn', description: 'Language → Category → CEFR level → Exercise type → Exercise.', actions: continueAction })}
+  <section class="dashboard-stats"><div><strong>${preferences.enrolled.length}</strong><span>courses enrolled</span></div><div><strong>${all.completed}</strong><span>exercises completed</span></div><div><strong>${all.correct}</strong><span>correct answers</span></div><div><strong>${all.speakingAttempts}</strong><span>speaking attempts</span></div></section>
+  <section class="course-grid">${Object.values(LANGUAGES).map((language) => {
+    const enrolled = preferences.enrolled.includes(language.id);
+    const summary = progressSummary(progress, { language: language.id });
+    return `<article class="course-card accent-${language.accent}"><span class="course-flag">${language.flag}</span><span class="enrolment-status ${enrolled ? 'active' : ''}">${enrolled ? 'Enrolled' : 'Not enrolled'}</span><h2>${escapeHtml(language.name)}</h2><p>Six learning categories, seven CEFR levels and a language-specific reference guide.</p><div class="chip-row"><span class="chip">${language.locale} audio</span><span class="chip">200 exercises per level</span><span class="chip">${summary.completed} complete</span></div><div class="button-row"><a class="button" href="${route(['language', language.id])}">Open course</a><button class="button secondary" data-enrol-language="${language.id}">${enrolled ? 'Leave course' : 'Enrol'}</button></div></article>`;
+  }).join('')}</section>`;
 }
 
 function renderLanguage(languageId) {
   const language = LANGUAGES[languageId];
   if (!language) return renderNotFound('Language not found.');
   const cards = CATEGORIES.map((category) => {
-    const total = CEFR_LEVELS.reduce((sum, level) => sum + getTopics(languageId, category.id, level.id)
-      .reduce((levelTotal, topic) => levelTotal + topic.exercises.length, 0), 0);
-    const summary = cappedSummary({ language: languageId, category: category.id }, total);
-    return CategoryCard({ category, completed: summary.completed, total, href: route(['language', languageId, 'category', category.id]) });
+    const total = CEFR_LEVELS.length * EXERCISES_PER_LEVEL;
+    const summary = progressSummary(progress, { language: languageId, category: category.id });
+    return CategoryCard({ category, completed: Math.min(summary.completed, total), total, href: route(['language', languageId, 'category', category.id]) });
   }).join('');
-  root.innerHTML = `${viewHeader({
-    eyebrow: `${language.flag} ${language.name}`,
-    title: `${language.name} course`,
-    description: 'Choose a category first. CEFR levels appear inside each category.',
-    backHref: '#/', backLabel: 'All courses',
-    actions: '<a class="button secondary" href="./legacy.html">Open preserved legacy lessons</a>'
-  })}<div class="selection-grid">${cards}</div>`;
+  const guide = getLanguageStructure(languageId);
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.flag} ${language.name}`, title: `${language.name} course`, description: 'Choose exercises or open the reference guide to understand how the language is structured.', backHref: '#/', backLabel: 'All courses', actions: '<a class="button secondary" href="./legacy.html">Legacy lessons</a>' })}<div class="selection-grid">${cards}<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">📖</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress — no scores.</small></span></a></div>`;
 }
 
 function renderCategory(languageId, categoryId) {
-  const language = LANGUAGES[languageId];
-  const category = getCategory(categoryId);
+  const language = LANGUAGES[languageId]; const category = getCategory(categoryId);
   if (!language || !category) return renderNotFound('Category not found.');
   const summaries = Object.fromEntries(CEFR_LEVELS.map((level) => {
-    const total = getTopics(languageId, categoryId, level.id)
-      .reduce((sum, topic) => sum + topic.exercises.length, 0);
-    return [level.id, cappedSummary({ language: languageId, category: categoryId, cefrLevel: level.id }, total)];
+    const validation = validateLevelCatalog(languageId, categoryId, level.id);
+    const summary = progressSummary(progress, { language: languageId, category: categoryId, cefrLevel: level.id });
+    return [level.id, { ...summary, completed: Math.min(summary.completed, validation.total), total: validation.valid ? EXERCISES_PER_LEVEL : validation.total }];
   }));
-  root.innerHTML = `${viewHeader({
-    eyebrow: `${language.name} · ${category.label}`,
-    title: 'Choose your CEFR level',
-    description: 'Difficulty changes the content, support, exercise type, speaking speed and expected answer length.',
-    backHref: route(['language', languageId]), backLabel: `${language.name} categories`
-  })}${CefrLevelSelector({
-    levels: CEFR_LEVELS,
-    summaries,
-    routeFor: (level) => route(['language', languageId, 'category', categoryId, 'level', level])
-  })}`;
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.name} · ${category.label}`, title: 'Choose your CEFR level', description: 'Each validated level contains 200 exercises divided into six separate exercise types.', backHref: route(['language', languageId]), backLabel: `${language.name} categories` })}${CefrLevelSelector({ levels: CEFR_LEVELS, summaries, routeFor: (level) => route(['language', languageId, 'category', categoryId, 'level', level]) })}`;
 }
 
-function renderTopics(languageId, categoryId, level) {
-  const language = LANGUAGES[languageId];
-  const category = getCategory(categoryId);
-  const levelMeta = CEFR_LEVELS.find((item) => item.id === level);
+function renderSections(languageId, categoryId, level) {
+  const language = LANGUAGES[languageId]; const category = getCategory(categoryId); const levelMeta = CEFR_LEVELS.find((item) => item.id === level);
   if (!language || !category || !levelMeta) return renderNotFound('Course level not found.');
-  const topics = getTopics(languageId, categoryId, level);
-  const cards = topics.map((topic) => {
-    const summary = topicProgress(topic);
-    return RichTopicCard({
-      topic,
-      completed: summary.completed,
-      total: summary.total,
-      href: route(['language', languageId, 'category', categoryId, 'level', level, 'topic', topic.topicId])
-    });
+  const sections = getExerciseSections(languageId, categoryId, level); const validation = validateLevelCatalog(languageId, categoryId, level, sections);
+  const cards = sections.map((section) => {
+    const summary = sectionSummary(languageId, categoryId, level, section); const percent = progressPercent(summary.completed, summary.total);
+    const savedId = getSectionPosition(progress, { language: languageId, category: categoryId, cefrLevel: level, exerciseType: section.id });
+    const href = route(['language', languageId, 'category', categoryId, 'level', level, 'type', section.id, 'exercise', savedId || section.exercises[0]?.id]);
+    return `<article class="exercise-type-card"><div class="exercise-type-heading"><span class="selection-icon">${summary.completed === summary.total ? '✓' : '→'}</span><div><h2>${escapeHtml(section.label)}</h2><p>${escapeHtml(section.description)}</p></div></div><div class="type-progress"><strong>${summary.completed}/${summary.total}</strong><span>${percent}% complete</span><span class="mini-progress"><i style="width:${percent}%"></i></span></div><a class="button" href="${href}">${savedId ? 'Continue' : 'Start section'}</a></article>`;
   }).join('');
-  root.innerHTML = `${viewHeader({
-    eyebrow: `${language.name} · ${category.label} · ${level}`,
-    title: `${level} — ${levelMeta.label}`,
-    description: levelMeta.guidance,
-    backHref: route(['language', languageId, 'category', categoryId]), backLabel: 'All levels'
-  })}${cards ? `<div class="selection-grid">${cards}</div>` : '<div class="notice">No lessons are available for this level yet.</div>'}`;
+  const warning = validation.valid ? '' : `<div class="notice warning">Content in development: ${validation.total} of ${EXERCISES_PER_LEVEL} exercises available. ${escapeHtml(validation.errors[0] || '')}</div>`;
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.name} · ${category.label} · ${level}`, title: 'Choose an exercise type', description: `${levelMeta.guidance} Exercise types stay separate, and only one exercise is loaded at a time.`, backHref: route(['language', languageId, 'category', categoryId]), backLabel: 'All levels' })}${warning}<div class="exercise-type-grid">${cards}</div>`;
 }
 
-function renderTopic(languageId, categoryId, level, topicId) {
-  const language = LANGUAGES[languageId];
-  const category = getCategory(categoryId);
-  const topic = findTopic(languageId, categoryId, level, topicId);
-  if (!language || !category || !topic) return renderNotFound('This lesson does not exist or could not be loaded.');
-  currentTopic = topic;
-  currentBasicsLesson = null;
-  root.innerHTML = `${viewHeader({
-    eyebrow: `${language.name} · ${category.label} · ${level}`,
-    title: topic.title,
-    description: topic.description,
-    backHref: route(['language', languageId, 'category', categoryId, 'level', level]), backLabel: `${level} topics`
-  })}
-  <article class="lesson-card">
-    <p class="eyebrow">Lesson</p><h2>${escapeHtml(topic.lesson.title)}</h2>
-    <p>${escapeHtml(topic.lesson.explanation)}</p>
-    <div class="example-list">${topic.lesson.examples.map((example) => `<div><span>Example</span>${escapeHtml(example)}</div>`).join('')}</div>
-    <div class="lesson-note"><strong>Common mistake</strong><p>${escapeHtml(topic.lesson.commonMistake)}</p></div>
-    <div class="lesson-note guidance"><strong>Support at ${level}</strong><p>${escapeHtml(topic.lesson.guidance)}</p></div>
-  </article>
-  <div class="exercise-stack">${topic.exercises.map((exercise, index) => ExpandedExerciseRenderer(exercise, {
-    speechSupported: isSpeechRecognitionSupported(window),
-    index,
-    total: topic.exercises.length,
-    completed: Boolean(getLessonProgress(progress, topicContext(topic, exercise))?.completed)
-  })).join('')}</div>`;
+function renderExercise(languageId, categoryId, level, sectionId, exerciseId) {
+  const language = LANGUAGES[languageId]; const category = getCategory(categoryId); const section = getExerciseSection(languageId, categoryId, level, sectionId);
+  if (!language || !category || !section) return renderNotFound('Exercise section not found.');
+  const index = Math.max(0, section.exercises.findIndex((item) => item.id === exerciseId)); const exercise = section.exercises[index];
+  if (!exercise) return renderNotFound('Exercise not found.');
+  currentExercise = exercise; currentContext = exerciseContext(languageId, categoryId, level, sectionId, exercise);
+  saveSectionPosition(progress, currentContext, exercise.id);
+  const summary = sectionSummary(languageId, categoryId, level, section);
+  const previous = section.exercises[index - 1]; const next = section.exercises[index + 1];
+  const nav = `<nav class="exercise-navigation"><a class="button secondary ${previous ? '' : 'disabled'}" ${previous ? `href="${route(['language', languageId, 'category', categoryId, 'level', level, 'type', sectionId, 'exercise', previous.id])}"` : 'aria-disabled="true"'}>Previous</a><span>${index + 1} of ${section.exercises.length} · ${summary.completed} complete</span><a class="button ${next ? '' : 'disabled'}" ${next ? `href="${route(['language', languageId, 'category', categoryId, 'level', level, 'type', sectionId, 'exercise', next.id])}"` : 'aria-disabled="true"'}>Next</a></nav>`;
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.name} · ${category.label} · ${level}`, title: section.label, description: section.description, backHref: route(['language', languageId, 'category', categoryId, 'level', level]), backLabel: 'Return to exercise types', actions: `<a class="button secondary" href="${route(['language', languageId, 'category', categoryId])}">CEFR levels</a>` })}${nav}${ExpandedExerciseRenderer(exercise, { speechSupported: isSpeechRecognitionSupported(window), index, total: section.exercises.length, completed: Boolean(getLessonProgress(progress, currentContext)?.completed) })}${nav}`;
 }
 
-function renderBasics() {
-  currentTopic = null;
-  currentBasicsLesson = null;
-  root.innerHTML = `${viewHeader({
-    eyebrow: 'English foundation course',
-    title: 'Language Basics',
-    description: 'Friendly explanations for learners who have never studied grammar terminology.',
-    backHref: '#/', backLabel: 'Dashboard'
-  })}<div class="basics-list">${LANGUAGE_BASICS.map((lesson) => {
-    const complete = Boolean(getLessonProgress(progress, basicsContext(lesson))?.completed);
-    return `<a class="basics-list-item ${complete ? 'is-complete' : ''}" href="${route(['basics', lesson.id])}"><span>${lesson.order}</span><strong>${escapeHtml(lesson.title)}</strong><small>${complete ? 'Complete ✓' : 'Definition · examples · quiz · practice'}</small></a>`;
-  }).join('')}</div>`;
+function renderStructure(languageId, query = '') {
+  const language = LANGUAGES[languageId]; const guide = getLanguageStructure(languageId);
+  if (!language || !guide) return renderNotFound('Language guide not found.');
+  const needle = query.trim().toLocaleLowerCase(); const lessons = guide.lessons.filter((lesson) => !needle || `${lesson.title} ${lesson.definition}`.toLocaleLowerCase().includes(needle));
+  const readCount = guide.lessons.filter((lesson) => progress.reading?.[`${languageId}|${lesson.id}`]?.read).length;
+  const recent = (progress.recentStructure?.[languageId] || []).map((id) => guide.lessons.find((lesson) => lesson.id === id)).filter(Boolean);
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.flag} Reference guide`, title: guide.title, description: guide.overview, backHref: route(['language', languageId]), backLabel: `${language.name} course` })}<section class="reference-tools"><label>Search topics<input type="search" data-structure-search="${languageId}" value="${escapeHtml(query)}" placeholder="Search grammar terminology or a language pattern"></label><div><strong>${readCount}/${guide.lessons.length}</strong><span> topics read</span></div></section>${recent.length ? `<section class="recent-topics"><strong>Recently viewed</strong><div class="button-row">${recent.map((lesson) => `<a class="button secondary" href="${route(['language', languageId, 'structure', 'topic', lesson.id])}">${escapeHtml(lesson.title)}</a>`).join('')}</div></section>` : ''}<div class="basics-list">${lessons.map((lesson) => { const read = progress.reading?.[`${languageId}|${lesson.id}`]?.read; const bookmark = progress.bookmarks?.[`${languageId}|${lesson.id}`]; return `<a class="basics-list-item ${read ? 'is-complete' : ''}" href="${route(['language', languageId, 'structure', 'topic', lesson.id])}"><span>${bookmark ? '★' : lesson.order}</span><strong>${escapeHtml(lesson.title)}</strong><small>${read ? 'Read ✓' : 'Definition · examples · breakdown · useful trick'}</small></a>`; }).join('') || '<div class="notice">No topics match this search.</div>'}</div>`;
 }
 
-function renderBasicsLesson(id) {
-  const lesson = findBasicsLesson(id);
-  if (!lesson) return renderNotFound('This Language Basics lesson does not exist.');
-  currentTopic = null;
-  currentBasicsLesson = lesson;
-  root.innerHTML = `${viewHeader({
-    eyebrow: `Language Basics · Lesson ${lesson.order}`,
-    title: lesson.title,
-    description: lesson.definition,
-    backHref: '#/basics', backLabel: 'All basics lessons'
-  })}
-  <article class="lesson-card basics-lesson">
-    <section><h2>Simple explanation</h2><p>${escapeHtml(lesson.simpleExplanation)}</p></section>
-    <section><h2>Example</h2><p class="example-sentence">${escapeHtml(lesson.examples[0])}</p>
-      <div class="sentence-breakdown">${lesson.breakdown.map((part) => `<div><strong>${escapeHtml(part.text)}</strong><span>${escapeHtml(part.role)}</span></div>`).join('')}</div>
-    </section>
-    <section class="lesson-note"><h2>Common mistake</h2><p>${escapeHtml(lesson.commonMistakes[0])}</p></section>
-    <section><h2>Connections to your courses</h2><div class="connection-grid"><p><strong>🇳🇱 Dutch</strong>${escapeHtml(lesson.connections.nl)}</p><p><strong>🇵🇱 Polish</strong>${escapeHtml(lesson.connections.pl)}</p><p><strong>🇵🇹 Portuguese</strong>${escapeHtml(lesson.connections.pt)}</p></div></section>
-  </article>
-  <section class="exercise-card" data-basics-quiz="${lesson.id}"><div class="exercise-kicker">Short quiz</div><h3>${escapeHtml(lesson.quiz.question)}</h3><div class="answer-options">${lesson.quiz.options.map((option, index) => `<button class="answer-option" type="button" data-basics-option="${index}">${escapeHtml(option)}</button>`).join('')}</div><div class="exercise-feedback" data-basics-feedback></div></section>
-  <section class="exercise-card" data-basics-manual="${lesson.id}"><div class="exercise-kicker">Manual exercise</div><h3>${escapeHtml(lesson.manualExercise.prompt)}</h3><label class="manual-field">Your example<textarea rows="4" data-basics-input placeholder="Write your own example"></textarea></label><button class="button" type="button" data-basics-model>Compare with model</button><div class="exercise-feedback" data-basics-manual-feedback></div></section>`;
+function breakdownClass(role) { for (const name of ['subject','verb','object','article','adjective','adverb','preposition','conjunction']) if (role.includes(name)) return name; return 'context'; }
+function renderStructureLesson(languageId, id) {
+  const language = LANGUAGES[languageId]; const guide = getLanguageStructure(languageId); const lesson = findStructureLesson(languageId, id);
+  if (!language || !guide || !lesson) return renderNotFound('Reference topic not found.');
+  saveStructureReading(progress, languageId, id);
+  const index = guide.lessons.indexOf(lesson); const previous = guide.lessons[index - 1]; const next = guide.lessons[index + 1]; const bookmarked = Boolean(progress.bookmarks?.[`${languageId}|${id}`]);
+  const related = lesson.related.map((relatedId) => guide.lessons.find((item) => item.id === relatedId)).filter(Boolean);
+  root.innerHTML = `${viewHeader({ eyebrow: `${guide.title} · Topic ${lesson.order}`, title: lesson.title, description: lesson.definition, backHref: route(['language', languageId, 'structure']), backLabel: 'Table of contents', actions: `<button class="button secondary" data-bookmark-structure="${id}" data-language="${languageId}">${bookmarked ? '★ Bookmarked' : '☆ Bookmark'}</button>` })}<article class="lesson-card structure-lesson">
+  <section><h2>Simple definition</h2><p>${escapeHtml(lesson.definition)}</p></section><section><h2>Why it matters</h2><p>${escapeHtml(lesson.whyItMatters)}</p></section><section><h2>How to recognise it</h2><p>${escapeHtml(lesson.recognition)}</p></section><section><h2>How it works in English</h2><p>${escapeHtml(lesson.englishComparison)}</p></section><section><h2>How it works here</h2><p>${escapeHtml(lesson.languageExplanation)}</p></section>
+  <section><h2>Examples</h2>${lesson.examples.map((example) => `<details class="expandable-example"><summary><span lang="${language.locale}">${escapeHtml(example.target)}</span><button class="icon-button inline-audio" data-structure-audio="${escapeHtml(example.target)}" data-locale="${language.locale}" aria-label="Listen">🔊</button></summary><p>${escapeHtml(example.translation)}</p></details>`).join('')}</section>
+  <section><h2>Visual sentence breakdown</h2><p class="example-sentence" lang="${language.locale}">${escapeHtml(guide.sentence)}</p><div class="sentence-breakdown">${lesson.breakdown.map((part) => `<div class="role-${breakdownClass(part.role)}"><strong>${escapeHtml(part.text)}</strong><span>${escapeHtml(part.role)}</span></div>`).join('')}</div></section>
+  <section class="reference-callout mistake"><h2>Common mistake</h2><p>${escapeHtml(lesson.commonMistake)}</p></section><section class="reference-callout trick"><h2>Useful trick</h2><p>${escapeHtml(lesson.usefulTrick)}</p></section><section class="reference-callout remember"><h2>Remember</h2><p>${escapeHtml(lesson.remember)}</p></section><section><h2>Connection</h2><p>${escapeHtml(lesson.connection)}</p></section><section><h2>Short summary</h2><p>${escapeHtml(lesson.summary)}</p></section><section><h2>Related lessons</h2><div class="button-row">${related.map((item) => `<a class="button secondary" href="${route(['language', languageId, 'structure', 'topic', item.id])}">${escapeHtml(item.title)}</a>`).join('')}</div></section></article><nav class="exercise-navigation"><a class="button secondary ${previous ? '' : 'disabled'}" ${previous ? `href="${route(['language', languageId, 'structure', 'topic', previous.id])}"` : 'aria-disabled="true"'}>Previous topic</a><a class="button ${next ? '' : 'disabled'}" ${next ? `href="${route(['language', languageId, 'structure', 'topic', next.id])}"` : 'aria-disabled="true"'}>Next topic</a></nav>`;
 }
 
-function renderNotFound(message) {
-  currentTopic = null;
-  currentBasicsLesson = null;
-  root.innerHTML = `${viewHeader({ eyebrow: 'Something went wrong', title: 'Page unavailable', description: message, backHref: '#/', backLabel: 'Dashboard' })}<div class="notice warning">${escapeHtml(message)}</div>`;
-}
-
+function renderNotFound(message) { currentExercise = currentContext = null; root.innerHTML = `${viewHeader({ eyebrow: 'Development warning', title: 'Page unavailable', description: message, backHref: '#/', backLabel: 'Dashboard' })}<div class="notice warning">${escapeHtml(message)}</div>`; }
 function renderRoute() {
-  const parts = decodeRoute();
-  if (!parts.length) renderHome();
-  else if (parts[0] === 'basics' && parts.length === 1) renderBasics();
-  else if (parts[0] === 'basics' && parts[1]) renderBasicsLesson(parts[1]);
-  else if (parts[0] === 'language' && parts[1] && parts.length === 2) renderLanguage(parts[1]);
-  else if (parts[0] === 'language' && parts[2] === 'category' && parts[3] && parts.length === 4) renderCategory(parts[1], parts[3]);
-  else if (parts[0] === 'language' && parts[2] === 'category' && parts[4] === 'level' && parts[5] && parts.length === 6) renderTopics(parts[1], parts[3], parts[5]);
-  else if (parts[0] === 'language' && parts[2] === 'category' && parts[4] === 'level' && parts[6] === 'topic' && parts[7]) renderTopic(parts[1], parts[3], parts[5], parts[7]);
+  const p = decodeRoute();
+  if (!p.length) renderHome();
+  else if (p[0] === 'language' && p[1] && p.length === 2) renderLanguage(p[1]);
+  else if (p[0] === 'language' && p[2] === 'structure' && p.length === 3) renderStructure(p[1]);
+  else if (p[0] === 'language' && p[2] === 'structure' && p[3] === 'topic' && p[4]) renderStructureLesson(p[1], p[4]);
+  else if (p[0] === 'language' && p[2] === 'category' && p[3] && p.length === 4) renderCategory(p[1], p[3]);
+  else if (p[0] === 'language' && p[2] === 'category' && p[4] === 'level' && p[5] && p.length === 6) renderSections(p[1], p[3], p[5]);
+  else if (p[0] === 'language' && p[2] === 'category' && p[4] === 'level' && p[6] === 'type' && p[8] === 'exercise' && p[9]) renderExercise(p[1], p[3], p[5], p[7], p[9]);
   else renderNotFound('The requested route is not valid.');
-  saveLastRoute(progress, location.hash || '#/');
-  document.title = `${root.querySelector('h1')?.textContent || 'Language Learning Studio'} · Language Studio`;
-  root.focus({ preventScroll: true });
-  scrollTo({ top: 0, behavior: preferences.reducedMotion ? 'auto' : 'smooth' });
+  saveLastRoute(progress, location.hash || '#/'); document.title = `${root.querySelector('h1')?.textContent || 'Language Learning Studio'} · Language Studio`; root.focus({ preventScroll: true }); scrollTo({ top: 0, behavior: preferences.reducedMotion ? 'auto' : 'smooth' });
 }
 
-function findExercise(id) {
-  return currentTopic?.exercises.find((exercise) => exercise.id === id) || null;
-}
-
-function normaliseAnswer(value) {
-  return String(value || '').toLocaleLowerCase().normalize('NFC').replace(/[.,!?;:"“”„'’]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function acceptedAnswer(exercise, answer) {
-  const normalized = normaliseAnswer(answer);
-  return exercise.acceptedAnswers.some((candidate) => normaliseAnswer(candidate) === normalized);
-}
-
-function feedbackTarget(exerciseId) {
-  return root.querySelector(`[data-feedback-for="${exerciseId}"]`);
-}
-
-function storeExerciseResult(exercise, result) {
-  const record = recordExerciseAttempt(progress, topicContext(currentTopic, exercise), { ...result, type: exercise.type });
-  if (record.completed) {
-    const card = root.querySelector(`[data-exercise-card="${exercise.id}"]`);
-    card?.classList.add('is-complete');
-    const status = card?.querySelector('[data-exercise-status]');
-    if (status) status.textContent = 'Complete ✓';
-  }
-  return record;
-}
-
-function showAnswerResult(exercise, answer) {
-  const correct = acceptedAnswer(exercise, answer);
-  storeExerciseResult(exercise, { correct, completed: correct, answer });
-  feedbackTarget(exercise.id).innerHTML = AnswerFeedback({ correct, explanation: exercise.explanation, acceptedAnswers: exercise.acceptedAnswers });
-}
-
-function listenToExercise(exercise) {
-  const target = feedbackTarget(exercise.id);
-  if (!preferences.soundEnabled) {
-    target.innerHTML = '<div class="notice warning">Pronunciation audio is disabled in Settings.</div>';
-    return;
-  }
-  if (!speakText(exercise.audioText, exercise.locale, exercise.difficultyMetadata.speechRate, window)) {
-    target.innerHTML = '<div class="notice warning">Audio is unavailable in this browser.</div>';
-  }
-}
-
-async function startSpeaking(exercise, trigger) {
-  const target = feedbackTarget(exercise.id);
-  const original = trigger.innerHTML;
-  trigger.disabled = true;
-  trigger.innerHTML = '<span aria-hidden="true">●</span> Listening…';
-  target.innerHTML = '<div class="notice">Speak now. Recognition stops automatically.</div>';
-  try {
-    const recognised = await recogniseOnce(exercise.locale, window);
-    const result = compareSpeech(recognised, exercise.correctAnswer, exercise.acceptedAnswers);
-    storeExerciseResult(exercise, { correct: result.accepted, completed: result.accepted, answer: recognised });
-    target.innerHTML = SpeechFeedback(result, exercise.id);
-  } catch (error) {
-    target.innerHTML = `<div class="notice warning" role="alert">${escapeHtml(error.message)}</div>`;
-  } finally {
-    trigger.disabled = false;
-    trigger.innerHTML = original;
-  }
-}
+function normaliseAnswer(value) { return String(value || '').toLocaleLowerCase().normalize('NFC').replace(/[.,!?;:"“”„'’]/g, '').replace(/\s+/g, ' ').trim(); }
+function acceptedAnswer(exercise, answer) { const normalized = normaliseAnswer(answer); return exercise.acceptedAnswers.some((candidate) => normaliseAnswer(candidate) === normalized); }
+const feedbackTarget = (id) => root.querySelector(`[data-feedback-for="${id}"]`);
+function storeExerciseResult(result) { const record = recordExerciseAttempt(progress, currentContext, { ...result, type: currentExercise.type }); if (record.completed) root.querySelector('[data-exercise-card]')?.classList.add('is-complete'); return record; }
+function showAnswerResult(answer) { const correct = acceptedAnswer(currentExercise, answer); storeExerciseResult({ correct, completed: correct, answer }); feedbackTarget(currentExercise.id).innerHTML = AnswerFeedback({ correct, explanation: currentExercise.explanation, acceptedAnswers: currentExercise.acceptedAnswers }); }
+function listen(text = currentExercise?.audioText, locale = currentExercise?.locale) { if (!preferences.soundEnabled) return; speakText(text, locale, currentExercise?.difficultyMetadata?.speechRate || 0.9, window); }
+async function startSpeaking(trigger) { const target = feedbackTarget(currentExercise.id); trigger.disabled = true; try { const recognised = await recogniseOnce(currentExercise.locale, window); const result = compareSpeech(recognised, currentExercise.correctAnswer, currentExercise.acceptedAnswers); storeExerciseResult({ correct: result.accepted, completed: result.accepted, answer: recognised }); target.innerHTML = SpeechFeedback(result, currentExercise.id); } catch (error) { target.innerHTML = `<div class="notice warning">${escapeHtml(error.message)}</div>`; } finally { trigger.disabled = false; } }
 
 root.addEventListener('click', (event) => {
-  const enrol = event.target.closest('[data-enrol-language]');
-  if (enrol) {
-    const language = enrol.dataset.enrolLanguage;
-    preferences = setCourseEnrolled(preferences, language, !preferences.enrolled.includes(language));
-    saveStudioPreferences(preferences);
-    renderHome();
-    return;
-  }
-  const listen = event.target.closest('[data-listen-exercise]');
-  if (listen) { const exercise = findExercise(listen.dataset.listenExercise); if (exercise) listenToExercise(exercise); return; }
-  const answer = event.target.closest('[data-answer-exercise]');
-  if (answer) { const exercise = findExercise(answer.dataset.answerExercise); if (exercise) showAnswerResult(exercise, answer.dataset.answer); return; }
-  const check = event.target.closest('[data-check-exercise]');
-  if (check) {
-    const exercise = findExercise(check.dataset.checkExercise);
-    const input = root.querySelector(`[data-input-exercise="${check.dataset.checkExercise}"]`);
-    if (exercise && input) showAnswerResult(exercise, input.value);
-    return;
-  }
-  const reveal = event.target.closest('[data-reveal-exercise]');
-  if (reveal) {
-    const exercise = findExercise(reveal.dataset.revealExercise);
-    const input = root.querySelector(`[data-input-exercise="${reveal.dataset.revealExercise}"]`);
-    if (exercise) {
-      storeExerciseResult(exercise, { correct: null, completed: Boolean(input?.value.trim()), answer: input?.value || '' });
-      feedbackTarget(exercise.id).innerHTML = `<div class="answer-feedback correct"><strong>Model answer</strong><p>${escapeHtml(exercise.correctAnswer)}</p><p>${escapeHtml(exercise.explanation)}</p></div>`;
-    }
-    return;
-  }
-  const speak = event.target.closest('[data-speak-exercise]');
-  if (speak) { const exercise = findExercise(speak.dataset.speakExercise); if (exercise) startSpeaking(exercise, speak); return; }
-  const basicsOption = event.target.closest('[data-basics-option]');
-  if (basicsOption && currentBasicsLesson) {
-    const option = currentBasicsLesson.quiz.options[Number(basicsOption.dataset.basicsOption)];
-    const correct = option === currentBasicsLesson.quiz.answer;
-    recordExerciseAttempt(progress, basicsContext(currentBasicsLesson), { correct, completed: correct, type: 'multipleChoice', answer: option });
-    root.querySelector('[data-basics-feedback]').innerHTML = AnswerFeedback({ correct, explanation: currentBasicsLesson.quiz.explanation, acceptedAnswers: [currentBasicsLesson.quiz.answer] });
-    return;
-  }
-  const basicsModel = event.target.closest('[data-basics-model]');
-  if (basicsModel && currentBasicsLesson) {
-    const input = root.querySelector('[data-basics-input]');
-    recordExerciseAttempt(progress, basicsContext(currentBasicsLesson), { correct: null, completed: Boolean(input.value.trim()), type: 'writing', answer: input.value });
-    root.querySelector('[data-basics-manual-feedback]').innerHTML = `<div class="answer-feedback correct"><strong>Model example</strong><p>${escapeHtml(currentBasicsLesson.manualExercise.modelAnswer)}</p><p>Compare its structure with your example. More than one answer can be valid.</p></div>`;
-  }
+  const enrol = event.target.closest('[data-enrol-language]'); if (enrol) { const id = enrol.dataset.enrolLanguage; preferences = setCourseEnrolled(preferences, id, !preferences.enrolled.includes(id)); saveStudioPreferences(preferences); renderHome(); return; }
+  const listenButton = event.target.closest('[data-listen-exercise]'); if (listenButton && currentExercise) { listen(); return; }
+  const answer = event.target.closest('[data-answer-exercise]'); if (answer && currentExercise) { showAnswerResult(answer.dataset.answer); return; }
+  const check = event.target.closest('[data-check-exercise]'); if (check && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); showAnswerResult(input?.value); return; }
+  const reveal = event.target.closest('[data-reveal-exercise]'); if (reveal && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); storeExerciseResult({ correct: null, completed: Boolean(input?.value.trim()), answer: input?.value || '' }); feedbackTarget(currentExercise.id).innerHTML = `<div class="answer-feedback correct"><strong>Model answer</strong><p>${escapeHtml(currentExercise.correctAnswer)}</p><p>${escapeHtml(currentExercise.explanation)}</p></div>`; return; }
+  const speak = event.target.closest('[data-speak-exercise]'); if (speak && currentExercise) { startSpeaking(speak); return; }
+  const audio = event.target.closest('[data-structure-audio]'); if (audio) { listen(audio.dataset.structureAudio, audio.dataset.locale); return; }
+  const bookmark = event.target.closest('[data-bookmark-structure]'); if (bookmark) { const active = toggleStructureBookmark(progress, bookmark.dataset.language, bookmark.dataset.bookmarkStructure); bookmark.textContent = active ? '★ Bookmarked' : '☆ Bookmark'; }
 });
-
-settingsButton.addEventListener('click', openSettings);
-closeSettings.addEventListener('click', hideSettings);
-settingsModal.addEventListener('click', (event) => { if (event.target === settingsModal) hideSettings(); });
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !settingsModal.hidden) hideSettings(); });
-document.addEventListener('change', (event) => {
-  const control = event.target.closest('[data-setting]');
-  if (!control) return;
-  const key = control.dataset.setting;
-  preferences[key] = control.type === 'checkbox' ? control.checked : key === 'dailyGoal' ? Number(control.value) : control.value;
-  saveStudioPreferences(preferences);
-  applyPreferences();
-});
-window.addEventListener('hashchange', renderRoute);
-matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (preferences.theme === 'system') applyPreferences(); });
-
-applyPreferences();
-syncSettingsControls();
-if (!location.hash) location.hash = '#/';
-else renderRoute();
+root.addEventListener('input', (event) => { const search = event.target.closest('[data-structure-search]'); if (!search) return; const language = search.dataset.structureSearch; const value = search.value; clearTimeout(structureSearchTimer); structureSearchTimer = setTimeout(() => { renderStructure(language, value); const nextSearch = root.querySelector('[data-structure-search]'); nextSearch?.focus(); nextSearch?.setSelectionRange(value.length, value.length); }, 120); });
+settingsButton.addEventListener('click', openSettings); closeSettings.addEventListener('click', hideSettings); settingsModal.addEventListener('click', (event) => { if (event.target === settingsModal) hideSettings(); }); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !settingsModal.hidden) hideSettings(); });
+document.addEventListener('change', (event) => { const control = event.target.closest('[data-setting]'); if (!control) return; const key = control.dataset.setting; preferences[key] = control.type === 'checkbox' ? control.checked : key === 'dailyGoal' ? Number(control.value) : control.value; saveStudioPreferences(preferences); applyPreferences(); });
+window.addEventListener('hashchange', renderRoute); matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (preferences.theme === 'system') applyPreferences(); });
+applyPreferences(); syncSettingsControls(); if (!location.hash) location.hash = '#/'; else renderRoute();
 
 export { COURSE_CONTENT };
-

@@ -1,5 +1,34 @@
 # CEFR and Speaking Upgrade Report
 
+## 200-exercise and language-structure upgrade (2026-07-16)
+
+The active route is now `Language -> Category -> CEFR level -> Exercise type -> Exercise`.
+Every one of the 126 language/category/level paths validates to exactly 200
+exercises, for 25,200 exercises overall. Six category-specific sections remain
+separate, and only one exercise is rendered at a time.
+
+Progress storage is version 3. Its key includes language, category, CEFR level,
+exercise type, and exercise ID. The version-2 store is copied to
+`language-studio-backup-language-studio-progress-v2` before records are migrated;
+legacy records remain marked as `legacy-25` rather than being discarded.
+
+The global dashboard Language Basics card and routes were removed. Dutch,
+Polish, and European Portuguese now each provide a score-free “How This
+Language Works” guide with 33 reference topics, search, bookmarks, recent/read
+state, previous/next links, expandable examples, pt-PT/nl-NL/pl-PL audio, and
+visual sentence breakdowns.
+
+Validation rejects incorrect totals, duplicate IDs, duplicate normalized prompts,
+duplicate answers within an exercise-type section, missing explanations, and
+missing accepted answers. An invalid route displays a development warning and
+never silently claims that incomplete content contains 200 exercises.
+
+Automated verification: 39 tests passed; 630 seed topics, 3,150 seed activities,
+25,200 separated exercises, and three language-structure guides were validated;
+the static GitHub Pages build completed. Live browser, microphone, synthesized
+audio listening, and console/mobile visual checks were not performed because the
+local address was blocked by the browser preference on this computer.
+
 ## Result
 
 The application now follows `Language -> Category -> CEFR level -> Topic -> Exercise` for Dutch, Polish, and European Portuguese. Grammar, Vocabulary, Pronunciation, Writing, and Conversation remain intact as top-level course categories, and Speaking has been added beside them. Language Basics is a separate English foundation course on the dashboard.

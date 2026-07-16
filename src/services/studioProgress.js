@@ -35,6 +35,34 @@ export function saveLastRoute(progress, route, storage = globalThis.localStorage
   writeJson(PROGRESS_KEY, progress, storage);
 }
 
+export function saveSectionPosition(progress, context, exerciseId, storage = globalThis.localStorage) {
+  const key = [context.language, context.category, context.cefrLevel, context.exerciseType].join('|');
+  progress.positions ||= {};
+  progress.positions[key] = exerciseId;
+  writeJson(PROGRESS_KEY, progress, storage);
+}
+
+export function getSectionPosition(progress, context) {
+  const key = [context.language, context.category, context.cefrLevel, context.exerciseType].join('|');
+  return progress.positions?.[key] || null;
+}
+
+export function saveStructureReading(progress, language, lessonId, storage = globalThis.localStorage) {
+  progress.reading ||= {};
+  progress.recentStructure ||= {};
+  progress.reading[`${language}|${lessonId}`] = { read: true, updatedAt: new Date().toISOString() };
+  progress.recentStructure[language] = [lessonId, ...(progress.recentStructure[language] || []).filter((id) => id !== lessonId)].slice(0, 5);
+  writeJson(PROGRESS_KEY, progress, storage);
+}
+
+export function toggleStructureBookmark(progress, language, lessonId, storage = globalThis.localStorage) {
+  progress.bookmarks ||= {};
+  const key = `${language}|${lessonId}`;
+  progress.bookmarks[key] = !progress.bookmarks[key];
+  writeJson(PROGRESS_KEY, progress, storage);
+  return progress.bookmarks[key];
+}
+
 export function progressSummary(progress, filter = {}) {
   const records = Object.values(progress.records).filter((record) => matches(record, filter));
   return {
@@ -51,4 +79,3 @@ export function progressSummary(progress, filter = {}) {
 export function getLessonProgress(progress, context) {
   return progress.records[progressKey(context)] || null;
 }
-
