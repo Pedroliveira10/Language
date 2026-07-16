@@ -9,7 +9,7 @@ import { ExpandedExerciseRenderer } from './components/ExpandedExerciseRenderer.
 import { AnswerFeedback, SpeechFeedback } from './components/FeedbackBox.js';
 import { escapeHtml, progressPercent } from './components/studioMarkup.js';
 import { speakText } from './services/studioAudio.js';
-import { compareSpeech, isSpeechRecognitionSupported, recogniseOnce } from './services/speechRecognition.js';
+import { compareSpeech, isSpeechRecognitionSupported, startRecognition } from './services/speechRecognition.js';
 import { getLessonProgress, getSectionPosition, loadStudioProgress, progressSummary, recordExerciseAttempt, saveLastRoute, saveSectionPosition, saveStructureReading, toggleStructureBookmark } from './services/studioProgress.js';
 import { loadStudioPreferences, saveStudioPreferences, setCourseEnrolled } from './services/studioPreferences.js';
 
@@ -22,6 +22,7 @@ let preferences = loadStudioPreferences();
 let currentExercise = null;
 let currentContext = null;
 let structureSearchTimer = null;
+let activeRecognition = null;
 
 const route = (parts) => `#/${parts.filter((part) => part !== undefined && part !== null).map((part) => encodeURIComponent(part)).join('/')}`;
 function decodeRoute() { try { return location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent); } catch { return []; } }
@@ -167,18 +168,34 @@ const feedbackTarget = (id) => root.querySelector(`[data-feedback-for="${id}"]`)
 function storeExerciseResult(result) { const record = recordExerciseAttempt(progress, currentContext, { ...result, type: currentExercise.type }); if (record.completed) root.querySelector('[data-exercise-card]')?.classList.add('is-complete'); return record; }
 function showAnswerResult(answer) { const correct = acceptedAnswer(currentExercise, answer); storeExerciseResult({ correct, completed: correct, answer }); feedbackTarget(currentExercise.id).innerHTML = AnswerFeedback({ correct, explanation: currentExercise.explanation, acceptedAnswers: currentExercise.acceptedAnswers }); }
 function listen(text = currentExercise?.audioText, locale = currentExercise?.locale) { if (!preferences.soundEnabled) return; speakText(text, locale, currentExercise?.difficultyMetadata?.speechRate || 0.9, window); }
-async function startSpeaking(trigger) { const target = feedbackTarget(currentExercise.id); trigger.disabled = true; try { const recognised = await recogniseOnce(currentExercise.locale, window); const result = compareSpeech(recognised, currentExercise.correctAnswer, currentExercise.acceptedAnswers); storeExerciseResult({ correct: result.accepted, completed: result.accepted, answer: recognised }); target.innerHTML = SpeechFeedback(result, currentExercise.id); } catch (error) { target.innerHTML = `<div class="notice warning">${escapeHtml(error.message)}</div>`; } finally { trigger.disabled = false; } }
+function setMicrophoneState(control, state) {
+  if (!control) return;
+  const labels = { idle: 'Start speaking', requesting: 'Requesting microphone…', listening: 'Listening…', processing: 'Checking speech…' };
+  const messages = { idle: 'Microphone is idle', requesting: 'Requesting microphone permission', listening: 'Microphone is listening', processing: 'Checking recognised speech' };
+  const trigger = control.querySelector('[data-speak-exercise]'); const stop = control.querySelector('[data-stop-speaking]'); const indicator = control.querySelector('[data-listening-indicator]');
+  control.dataset.state = state; control.querySelector('[data-microphone-label]').textContent = labels[state]; control.querySelector('[data-microphone-status]').textContent = messages[state];
+  trigger.disabled = state !== 'idle'; stop.hidden = state !== 'listening'; indicator.hidden = state !== 'listening';
+}
+async function startSpeaking(trigger) {
+  if (activeRecognition) return;
+  const target = feedbackTarget(currentExercise.id); const control = trigger.closest('[data-microphone-control]'); setMicrophoneState(control, 'requesting');
+  const session = startRecognition(currentExercise.locale, window); activeRecognition = session; setMicrophoneState(control, 'listening');
+  try { const recognised = await session.promise; setMicrophoneState(control, 'processing'); const result = compareSpeech(recognised, currentExercise.correctAnswer, currentExercise.acceptedAnswers, { flexible: currentExercise.responseMode === 'flexible', requiredConcepts: currentExercise.requiredConcepts }); storeExerciseResult({ correct: result.accepted, completed: result.accepted, answer: recognised }); target.innerHTML = SpeechFeedback(result, currentExercise.id); }
+  catch (error) { target.innerHTML = `<div class="notice warning" role="status">${escapeHtml(error.message)}</div>`; }
+  finally { activeRecognition = null; setMicrophoneState(control, 'idle'); }
+}
 
 root.addEventListener('click', (event) => {
   const enrol = event.target.closest('[data-enrol-language]'); if (enrol) { const id = enrol.dataset.enrolLanguage; preferences = setCourseEnrolled(preferences, id, !preferences.enrolled.includes(id)); saveStudioPreferences(preferences); renderHome(); return; }
   const listenButton = event.target.closest('[data-listen-exercise]'); if (listenButton && currentExercise) { listen(); return; }
-  const answer = event.target.closest('[data-answer-exercise]'); if (answer && currentExercise) { showAnswerResult(answer.dataset.answer); return; }
+  const answer = event.target.closest('[data-answer-exercise]'); if (answer && currentExercise) { const options = answer.closest('.answer-options'); options.querySelectorAll('[data-answer-exercise]').forEach((button) => { button.disabled = true; button.classList.toggle('is-correct', acceptedAnswer(currentExercise, button.dataset.answer)); button.classList.remove('is-selected','is-incorrect'); }); answer.classList.add('is-selected'); if (!acceptedAnswer(currentExercise, answer.dataset.answer)) answer.classList.add('is-incorrect'); showAnswerResult(answer.dataset.answer); return; }
   const token = event.target.closest('[data-order-token]'); if (token && currentExercise) { const workspace = token.closest('[data-ordering-workspace]'); const destination = token.closest('[data-order-zone="available"]') ? workspace.querySelector('[data-order-zone="arranged"]') : workspace.querySelector('[data-order-zone="available"]'); destination.append(token); return; }
   const resetOrder = event.target.closest('[data-reset-order]'); if (resetOrder && currentExercise) { const workspace = resetOrder.closest('[data-ordering-workspace]'); const available = workspace.querySelector('[data-order-zone="available"]'); [...workspace.querySelectorAll('[data-order-token]')].sort((a, b) => Number(a.dataset.orderPosition) - Number(b.dataset.orderPosition)).forEach((item) => available.append(item)); feedbackTarget(currentExercise.id).innerHTML = ''; return; }
   const submitOrder = event.target.closest('[data-submit-order]'); if (submitOrder && currentExercise) { const tokens = [...submitOrder.closest('[data-ordering-workspace]').querySelectorAll('[data-order-zone="arranged"] [data-order-token]')].map((item) => item.dataset.orderToken); showAnswerResult(sentenceFromTokens(tokens)); return; }
   const check = event.target.closest('[data-check-exercise]'); if (check && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); showAnswerResult(input?.value); return; }
   const reveal = event.target.closest('[data-reveal-exercise]'); if (reveal && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); storeExerciseResult({ correct: null, completed: Boolean(input?.value.trim()), answer: input?.value || '' }); feedbackTarget(currentExercise.id).innerHTML = `<div class="answer-feedback correct"><strong>Model answer</strong><p>${escapeHtml(currentExercise.correctAnswer)}</p><p>${escapeHtml(currentExercise.explanation)}</p></div>`; return; }
   const speak = event.target.closest('[data-speak-exercise]'); if (speak && currentExercise) { startSpeaking(speak); return; }
+  const stopSpeaking = event.target.closest('[data-stop-speaking]'); if (stopSpeaking && activeRecognition) { activeRecognition.stop(); return; }
   const audio = event.target.closest('[data-structure-audio]'); if (audio) { listen(audio.dataset.structureAudio, audio.dataset.locale); return; }
   const bookmark = event.target.closest('[data-bookmark-structure]'); if (bookmark) { const active = toggleStructureBookmark(progress, bookmark.dataset.language, bookmark.dataset.bookmarkStructure); bookmark.textContent = active ? '★ Bookmarked' : '☆ Bookmark'; }
 });

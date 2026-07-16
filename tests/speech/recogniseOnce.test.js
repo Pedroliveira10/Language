@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { recogniseOnce } from '../../src/services/speechRecognition.js';
+import { recogniseOnce, startRecognition } from '../../src/services/speechRecognition.js';
 
 test('starts recognition with the requested locale and returns the transcript', async () => {
   let instance;
@@ -38,4 +38,14 @@ test('rejects safely when speech recognition is unavailable', async () => {
     recogniseOnce('pl-PL', {}),
     /Speaking exercises are not supported by this browser\./
   );
+});
+
+test('an active recognition session can be stopped and settles immediately', async () => {
+  let instance;
+  class StoppableRecognition { constructor() { instance = this; } start() { this.started = true; } stop() { this.stopped = true; } }
+  const session = startRecognition('nl-NL', { SpeechRecognition: StoppableRecognition });
+  session.stop();
+  await assert.rejects(session.promise, /Listening stopped/);
+  assert.equal(instance.started, true);
+  assert.equal(instance.stopped, true);
 });
