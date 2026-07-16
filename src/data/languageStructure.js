@@ -3,6 +3,7 @@ import { LANGUAGE_BASICS } from './language-basics/index.js';
 const META = Object.freeze({
   nl: {
     title: 'How Dutch Works', locale: 'nl-NL',
+    examples: [['Ik drink koffie.', 'I drink coffee.'], ['De kleine hond loopt snel.', 'The small dog walks quickly.'], ['Wij wonen in Amsterdam.', 'We live in Amsterdam.'], ['Zij geeft haar vriend een boek.', 'She gives her friend a book.'], ['Omdat het regent, blijven we thuis.', 'Because it is raining, we stay home.'], ['Ik heb geen auto.', 'I do not have a car.'], ['Waar woon je?', 'Where do you live?'], ['Morgen ga ik werken.', 'Tomorrow I am going to work.']],
     sentence: 'Ik drink koffie.', translation: 'I drink coffee.',
     breakdown: [['Ik', 'pronoun subject'], ['drink', 'verb'], ['koffie', 'noun direct object']],
     overview: 'Dutch relies strongly on verb position. Main clauses usually place the finite verb second, while subordinate clauses often move verbs towards the end.',
@@ -20,6 +21,7 @@ const META = Object.freeze({
   },
   pl: {
     title: 'How Polish Works', locale: 'pl-PL',
+    examples: [['Piję kawę.', 'I drink coffee.'], ['Mały pies biegnie szybko.', 'The small dog runs quickly.'], ['Mieszkamy w Warszawie.', 'We live in Warsaw.'], ['Ona daje przyjacielowi książkę.', 'She gives her friend a book.'], ['Ponieważ pada, zostajemy w domu.', 'Because it is raining, we stay home.'], ['Nie mam samochodu.', 'I do not have a car.'], ['Gdzie mieszkasz?', 'Where do you live?'], ['Jutro idę do pracy.', 'Tomorrow I am going to work.']],
     sentence: 'Ja piję kawę.', translation: 'I drink coffee.',
     breakdown: [['Ja', 'pronoun subject'], ['piję', 'verb'], ['kawę', 'noun direct object, accusative']],
     overview: 'Polish uses rich endings. Verb forms often reveal the subject, while noun and adjective endings reveal gender, number and grammatical case.',
@@ -37,6 +39,7 @@ const META = Object.freeze({
   },
   pt: {
     title: 'How European Portuguese Works', locale: 'pt-PT',
+    examples: [['Eu bebo café.', 'I drink coffee.'], ['O cão pequeno corre depressa.', 'The small dog runs quickly.'], ['Vivemos em Lisboa.', 'We live in Lisbon.'], ['Ela dá um livro ao amigo.', 'She gives her friend a book.'], ['Como está a chover, ficamos em casa.', 'Because it is raining, we stay home.'], ['Não tenho carro.', 'I do not have a car.'], ['Onde moras?', 'Where do you live?'], ['Amanhã vou trabalhar.', 'Tomorrow I am going to work.']],
     sentence: 'Eu bebo café.', translation: 'I drink coffee.',
     breakdown: [['Eu', 'pronoun subject'], ['bebo', 'verb'], ['café', 'noun direct object']],
     overview: 'European Portuguese uses rich verb conjugation, gender and number agreement, contractions, and characteristic placement of unstressed object pronouns.',
@@ -61,7 +64,8 @@ function relatedFor(index, lessons) {
 function makeLesson(language, base, index, all) {
   const meta = META[language];
   const focus = meta.facts[index % meta.facts.length];
-  const languageExample = meta.sentence;
+  const selectedExamples = [0, 1, 2].map((offset) => meta.examples[(index + offset) % meta.examples.length]);
+  const languageExample = selectedExamples[0][0];
   return {
     id: base.id,
     order: index + 1,
@@ -71,11 +75,7 @@ function makeLesson(language, base, index, all) {
     recognition: `Look for the word or group doing the grammatical job described here. Then check its position, ending and relationship with nearby words.`,
     englishComparison: `${base.simpleExplanation} English often relies on fixed word order; the selected language may also use endings or verb position.`,
     languageExplanation: `${meta.overview} For this topic, remember: ${focus}`,
-    examples: [
-      { target: languageExample, translation: meta.translation },
-      { target: base.examples[0], translation: 'English comparison example' },
-      { target: meta.comparisons[index % meta.comparisons.length], translation: 'Language-specific pattern to remember' }
-    ],
+    examples: selectedExamples.map(([target, translation]) => ({ target, translation })),
     breakdown: meta.breakdown.map(([text, role]) => ({ text, role })),
     commonMistake: base.commonMistakes[0],
     usefulTrick: `Start with “${languageExample}”. Label each word, then change only one feature at a time. ${meta.comparisons[index % meta.comparisons.length]}.`,

@@ -1,7 +1,7 @@
 import { CEFR_LEVELS } from './config/cefrLevels.js';
 import { CATEGORIES, getCategory } from './config/categories.js';
 import { COURSE_CONTENT, LANGUAGES } from './data/expandedCourseContent.js';
-import { EXERCISES_PER_LEVEL, getExerciseSections, getExerciseSection, validateLevelCatalog } from './data/exerciseCatalog.js';
+import { EXERCISES_PER_LEVEL, getExerciseSections, getExerciseSection, sentenceFromTokens, validateLevelCatalog } from './data/exerciseCatalog.js';
 import { getLanguageStructure, findStructureLesson } from './data/languageStructure.js';
 import { CategoryCard } from './components/CategoryCard.js';
 import { CefrLevelSelector } from './components/CefrLevelSelector.js';
@@ -69,6 +69,7 @@ function renderLanguage(languageId) {
     return CategoryCard({ category, completed: Math.min(summary.completed, total), total, href: route(['language', languageId, 'category', category.id]) });
   }).join('');
   const guide = getLanguageStructure(languageId);
+  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">Guide</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
   root.innerHTML = `${viewHeader({ eyebrow: `${language.flag} ${language.name}`, title: `${language.name} course`, description: 'Choose exercises or open the reference guide to understand how the language is structured.', backHref: '#/', backLabel: 'All courses', actions: '<a class="button secondary" href="./legacy.html">Legacy lessons</a>' })}<div class="selection-grid">${cards}<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">📖</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress — no scores.</small></span></a></div>`;
 }
 
@@ -81,6 +82,19 @@ function renderCategory(languageId, categoryId) {
     return [level.id, { ...summary, completed: Math.min(summary.completed, validation.total), total: validation.valid ? EXERCISES_PER_LEVEL : validation.total }];
   }));
   root.innerHTML = `${viewHeader({ eyebrow: `${language.name} · ${category.label}`, title: 'Choose your CEFR level', description: 'Each validated level contains 200 exercises divided into six separate exercise types.', backHref: route(['language', languageId]), backLabel: `${language.name} categories` })}${CefrLevelSelector({ levels: CEFR_LEVELS, summaries, routeFor: (level) => route(['language', languageId, 'category', categoryId, 'level', level]) })}`;
+}
+
+function renderLanguageGuideFirst(languageId) {
+  const language = LANGUAGES[languageId];
+  if (!language) return renderNotFound('Language not found.');
+  const guide = getLanguageStructure(languageId);
+  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">Guide</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
+  const categoryCards = CATEGORIES.map((category) => {
+    const total = CEFR_LEVELS.length * EXERCISES_PER_LEVEL;
+    const summary = progressSummary(progress, { language: languageId, category: category.id });
+    return CategoryCard({ category, completed: Math.min(summary.completed, total), total, href: route(['language', languageId, 'category', category.id]) });
+  }).join('');
+  root.innerHTML = `${viewHeader({ eyebrow: `${language.flag} ${language.name}`, title: `${language.name} course`, description: 'Start with how the language works, then choose an exercise category.', backHref: '#/', backLabel: 'All courses', actions: '<a class="button secondary" href="./legacy.html">Legacy lessons</a>' })}<div class="selection-grid">${guideCard}${categoryCards}</div>`;
 }
 
 function renderSections(languageId, categoryId, level) {
@@ -137,7 +151,7 @@ function renderNotFound(message) { currentExercise = currentContext = null; root
 function renderRoute() {
   const p = decodeRoute();
   if (!p.length) renderHome();
-  else if (p[0] === 'language' && p[1] && p.length === 2) renderLanguage(p[1]);
+  else if (p[0] === 'language' && p[1] && p.length === 2) renderLanguageGuideFirst(p[1]);
   else if (p[0] === 'language' && p[2] === 'structure' && p.length === 3) renderStructure(p[1]);
   else if (p[0] === 'language' && p[2] === 'structure' && p[3] === 'topic' && p[4]) renderStructureLesson(p[1], p[4]);
   else if (p[0] === 'language' && p[2] === 'category' && p[3] && p.length === 4) renderCategory(p[1], p[3]);
@@ -159,12 +173,19 @@ root.addEventListener('click', (event) => {
   const enrol = event.target.closest('[data-enrol-language]'); if (enrol) { const id = enrol.dataset.enrolLanguage; preferences = setCourseEnrolled(preferences, id, !preferences.enrolled.includes(id)); saveStudioPreferences(preferences); renderHome(); return; }
   const listenButton = event.target.closest('[data-listen-exercise]'); if (listenButton && currentExercise) { listen(); return; }
   const answer = event.target.closest('[data-answer-exercise]'); if (answer && currentExercise) { showAnswerResult(answer.dataset.answer); return; }
+  const token = event.target.closest('[data-order-token]'); if (token && currentExercise) { const workspace = token.closest('[data-ordering-workspace]'); const destination = token.closest('[data-order-zone="available"]') ? workspace.querySelector('[data-order-zone="arranged"]') : workspace.querySelector('[data-order-zone="available"]'); destination.append(token); return; }
+  const resetOrder = event.target.closest('[data-reset-order]'); if (resetOrder && currentExercise) { const workspace = resetOrder.closest('[data-ordering-workspace]'); const available = workspace.querySelector('[data-order-zone="available"]'); [...workspace.querySelectorAll('[data-order-token]')].sort((a, b) => Number(a.dataset.orderPosition) - Number(b.dataset.orderPosition)).forEach((item) => available.append(item)); feedbackTarget(currentExercise.id).innerHTML = ''; return; }
+  const submitOrder = event.target.closest('[data-submit-order]'); if (submitOrder && currentExercise) { const tokens = [...submitOrder.closest('[data-ordering-workspace]').querySelectorAll('[data-order-zone="arranged"] [data-order-token]')].map((item) => item.dataset.orderToken); showAnswerResult(sentenceFromTokens(tokens)); return; }
   const check = event.target.closest('[data-check-exercise]'); if (check && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); showAnswerResult(input?.value); return; }
   const reveal = event.target.closest('[data-reveal-exercise]'); if (reveal && currentExercise) { const input = root.querySelector(`[data-input-exercise="${currentExercise.id}"]`); storeExerciseResult({ correct: null, completed: Boolean(input?.value.trim()), answer: input?.value || '' }); feedbackTarget(currentExercise.id).innerHTML = `<div class="answer-feedback correct"><strong>Model answer</strong><p>${escapeHtml(currentExercise.correctAnswer)}</p><p>${escapeHtml(currentExercise.explanation)}</p></div>`; return; }
   const speak = event.target.closest('[data-speak-exercise]'); if (speak && currentExercise) { startSpeaking(speak); return; }
   const audio = event.target.closest('[data-structure-audio]'); if (audio) { listen(audio.dataset.structureAudio, audio.dataset.locale); return; }
   const bookmark = event.target.closest('[data-bookmark-structure]'); if (bookmark) { const active = toggleStructureBookmark(progress, bookmark.dataset.language, bookmark.dataset.bookmarkStructure); bookmark.textContent = active ? '★ Bookmarked' : '☆ Bookmark'; }
 });
+root.addEventListener('dragstart', (event) => { const token = event.target.closest('[data-order-token]'); if (token) { token.classList.add('is-dragging'); event.dataTransfer?.setData('text/plain', token.dataset.orderToken); } });
+root.addEventListener('dragend', (event) => event.target.closest('[data-order-token]')?.classList.remove('is-dragging'));
+root.addEventListener('dragover', (event) => { if (event.target.closest('[data-order-zone]')) event.preventDefault(); });
+root.addEventListener('drop', (event) => { const zone = event.target.closest('[data-order-zone]'); const token = root.querySelector('[data-order-token].is-dragging'); if (zone && token) { event.preventDefault(); zone.append(token); } });
 root.addEventListener('input', (event) => { const search = event.target.closest('[data-structure-search]'); if (!search) return; const language = search.dataset.structureSearch; const value = search.value; clearTimeout(structureSearchTimer); structureSearchTimer = setTimeout(() => { renderStructure(language, value); const nextSearch = root.querySelector('[data-structure-search]'); nextSearch?.focus(); nextSearch?.setSelectionRange(value.length, value.length); }, 120); });
 settingsButton.addEventListener('click', openSettings); closeSettings.addEventListener('click', hideSettings); settingsModal.addEventListener('click', (event) => { if (event.target === settingsModal) hideSettings(); }); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !settingsModal.hidden) hideSettings(); });
 document.addEventListener('change', (event) => { const control = event.target.closest('[data-setting]'); if (!control) return; const key = control.dataset.setting; preferences[key] = control.type === 'checkbox' ? control.checked : key === 'dailyGoal' ? Number(control.value) : control.value; saveStudioPreferences(preferences); applyPreferences(); });
