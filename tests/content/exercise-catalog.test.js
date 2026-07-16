@@ -54,3 +54,49 @@ test('reusable validation rejects malformed content', () => {
   const base = getExerciseSections('nl', 'grammar', 'A1')[0].exercises[0];
   assert.ok(validateExercise({ ...base, prompt: `${base.exerciseTypeLabel} 7: Work with this level-appropriate language`, correctAnswer: 'one / two' }).length >= 2);
 });
+
+test('Dutch Grammar A0 blanks the practised verb rather than the name', () => {
+  const exercise = getExerciseSections('nl', 'grammar', 'A0').find((section) => section.id === 'fill-blank').exercises[0];
+  assert.equal(exercise.blank, 'Hallo, ik ____ Sam.');
+  assert.equal(exercise.correctAnswer, 'ben');
+  assert.deepEqual(exercise.acceptedAnswers, ['ben']);
+  assert.equal(exercise.blank.replace('____', exercise.correctAnswer), exercise.audioText);
+  assert.equal(exercise.translation, null);
+});
+
+test('Choose the Reply always renders three or four unique target-language options', () => {
+  for (const language of Object.keys(LANGUAGES)) {
+    const section = getExerciseSections(language, 'conversation', 'A0').find((item) => item.id === 'choose-reply');
+    for (const exercise of section.exercises) {
+      assert.ok(exercise.options.length >= 3 && exercise.options.length <= 4);
+      assert.equal(new Set(exercise.options).size, exercise.options.length);
+      assert.equal(exercise.options.filter((option) => option === exercise.correctAnswer).length, 1);
+      const html = ExpandedExerciseRenderer(exercise, { speechSupported: false, index: 0, total: 5, completed: false });
+      assert.equal((html.match(/data-answer-exercise=/g) || []).length, exercise.options.length);
+    }
+  }
+});
+
+test('validation rejects missing choices and statements posing as questions', () => {
+  const reply = getExerciseSections('nl', 'conversation', 'A0').find((section) => section.id === 'choose-reply').exercises[0];
+  assert.ok(validateExercise({ ...reply, options: [] }).some((error) => error.includes('three unique')));
+  const question = getExerciseSections('nl', 'speaking', 'A0').find((section) => section.id === 'answer-question').exercises[0];
+  assert.ok(validateExercise({ ...question, prompt: 'Hallo, ik ben Sam.' }).some((error) => error.includes('genuine')));
+});
+
+test('Answer a Question uses real questions and multiple natural responses', () => {
+  for (const language of Object.keys(LANGUAGES)) {
+    const exercises = getExerciseSections(language, 'speaking', 'A0').find((section) => section.id === 'answer-question').exercises;
+    for (const exercise of exercises) { assert.match(exercise.prompt, /\?$/); assert.equal(exercise.audioText, exercise.prompt); assert.ok(exercise.acceptedAnswers.length >= 2); assert.notEqual(normalizeText(exercise.prompt), normalizeText(exercise.correctAnswer)); }
+  }
+});
+
+test('speaking exercise types use distinct interaction contracts', () => {
+  const sections = Object.fromEntries(getExerciseSections('nl', 'speaking', 'A0').map((section) => [section.id, section.exercises[0]]));
+  assert.equal(sections['repeat-word'].correctAnswer.includes(' '), false);
+  assert.equal(sections['repeat-word'].audioText, sections['repeat-word'].correctAnswer);
+  assert.equal(sections['repeat-sentence'].responseMode, 'exact');
+  assert.equal(sections['answer-question'].responseMode, 'flexible');
+  assert.equal(sections['free-speaking'].responseMode, 'flexible');
+  assert.equal(sections['free-speaking'].audioText, null);
+});

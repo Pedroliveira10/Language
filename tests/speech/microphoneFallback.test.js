@@ -18,4 +18,7 @@ test('renders a click-to-start control when speech recognition is supported', ()
 
   assert.match(markup, /data-speak-exercise/);
   assert.match(markup, /Start speaking/);
+  assert.match(markup, /data-listening-indicator/);
+  assert.match(markup, /data-stop-speaking/);
+  assert.match(markup, /Microphone is idle/);
 });

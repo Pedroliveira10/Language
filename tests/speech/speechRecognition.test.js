@@ -25,8 +25,13 @@ test('speech comparison reports missing and additional words', () => {
   assert.ok(result.score < 80);
 });
 
+test('flexible question scoring accepts natural alternatives without exact model matching', () => {
+  const result = compareSpeech('Prima', 'Het gaat goed.', ['Goed.', 'Prima.', 'Niet zo goed.'], { flexible: true, requiredConcepts: ['goed'] });
+  assert.equal(result.accepted, true);
+  assert.equal(result.score, 100);
+});
+
 test('support detection recognises prefixed browser implementation', () => {
   assert.equal(isSpeechRecognitionSupported({}), false);
   assert.equal(isSpeechRecognitionSupported({ webkitSpeechRecognition() {} }), true);
 });
-

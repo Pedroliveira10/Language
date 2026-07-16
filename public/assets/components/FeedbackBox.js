@@ -25,10 +25,10 @@ export function SpeechFeedback(result, exerciseId) {
 }
 
 export function AnswerFeedback({ correct, explanation, acceptedAnswers = [] }) {
+  if (correct) return '<div class="answer-feedback correct" role="status"><strong>Correct.</strong></div>';
   return `<div class="answer-feedback ${correct ? 'correct' : 'incorrect'}" role="status">
-    <strong>${correct ? 'Correct.' : 'Not quite.'}</strong>
+    <strong>Not quite.</strong>
     <p>${escapeHtml(explanation)}</p>
     ${!correct && acceptedAnswers.length ? `<p>Accepted answer: ${escapeHtml(acceptedAnswers[0])}</p>` : ''}
   </div>`;
 }
-
