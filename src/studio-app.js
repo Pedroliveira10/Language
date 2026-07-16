@@ -1,7 +1,7 @@
 import { CEFR_LEVELS } from './config/cefrLevels.js';
 import { CATEGORIES, getCategory } from './config/categories.js';
 import { COURSE_CONTENT, LANGUAGES } from './data/expandedCourseContent.js';
-import { EXERCISES_PER_LEVEL, getExerciseSections, getExerciseSection, sentenceFromTokens, validateLevelCatalog } from './data/exerciseCatalog.js';
+import { EXERCISES_PER_LEVEL, getExerciseSections, getExerciseSection, sentenceFromTokens, validateLevelCatalog } from './data/exerciseCatalog.js?v=20260716-1';
 import { getLanguageStructure, findStructureLesson } from './data/languageStructure.js';
 import { CategoryCard } from './components/CategoryCard.js';
 import { CefrLevelSelector } from './components/CefrLevelSelector.js';
@@ -70,7 +70,7 @@ function renderLanguage(languageId) {
     return CategoryCard({ category, completed: Math.min(summary.completed, total), total, href: route(['language', languageId, 'category', category.id]) });
   }).join('');
   const guide = getLanguageStructure(languageId);
-  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">Guide</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
+  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon" aria-hidden="true">📖</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
   root.innerHTML = `${viewHeader({ eyebrow: `${language.flag} ${language.name}`, title: `${language.name} course`, description: 'Choose exercises or open the reference guide to understand how the language is structured.', backHref: '#/', backLabel: 'All courses', actions: '<a class="button secondary" href="./legacy.html">Legacy lessons</a>' })}<div class="selection-grid">${cards}<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">📖</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress — no scores.</small></span></a></div>`;
 }
 
@@ -89,7 +89,7 @@ function renderLanguageGuideFirst(languageId) {
   const language = LANGUAGES[languageId];
   if (!language) return renderNotFound('Language not found.');
   const guide = getLanguageStructure(languageId);
-  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon">Guide</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
+  const guideCard = `<a class="selection-card structure-card" href="${route(['language', languageId, 'structure'])}"><span class="selection-icon" aria-hidden="true">📖</span><span class="selection-copy"><strong>${escapeHtml(guide.title)}</strong><small>Explanations, examples, audio, bookmarks and reading progress.</small></span></a>`;
   const categoryCards = CATEGORIES.map((category) => {
     const total = CEFR_LEVELS.length * EXERCISES_PER_LEVEL;
     const summary = progressSummary(progress, { language: languageId, category: category.id });
