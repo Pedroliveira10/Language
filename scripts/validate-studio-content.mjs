@@ -34,8 +34,8 @@ for (const language of Object.keys(LANGUAGES)) {
     for (const level of CEFR_LEVELS) {
       const sections = getExerciseSections(language, category.id, level.id);
       const validation = validateLevelCatalog(language, category.id, level.id, sections);
-      if (!validation.valid) throw new Error(`${language}/${category.id}/${level.id}: ${validation.errors.join(' ')}`);
-      if (sections.reduce((sum, section) => sum + section.exercises.length, 0) !== EXERCISES_PER_LEVEL) throw new Error(`Incorrect total: ${language}/${category.id}/${level.id}`);
+      if (!validation.contentValid) throw new Error(`${language}/${category.id}/${level.id}: ${validation.errors.join(' ')}`);
+      if (sections.reduce((sum, section) => sum + section.targetCount, 0) !== EXERCISES_PER_LEVEL) throw new Error(`Incorrect target total: ${language}/${category.id}/${level.id}`);
       expandedExerciseCount += validation.total;
     }
   }
